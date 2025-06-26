@@ -13,12 +13,13 @@ From Ideal to Real: Unified and Data-Efficient Dense Prediction for Real-World S
 Repo for "<a href="https://arxiv.org/abs/2506.20279" target="_blank">From Ideal to Real: Unified and Data-Efficient Dense Prediction for Real-World Scenarios</a>"
 </p>
 
+![Visual](./examples/visual_examples.jpg)
 
 ## DenseDiT Model
-![DenseDiT](./examples/visual_examples.jpg)
+![DenseDiT](./examples/densediT.jpg)
 
 ## DenseWorld Benchmark
-![DenseDiT](./examples/denseworld.jpg)
+![DenseWorld](./examples/denseworld.jpg)
 
 ##  News
 
