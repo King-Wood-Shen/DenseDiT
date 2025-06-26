@@ -25,7 +25,7 @@ Repo for "<a href="https://arxiv.org/abs/2506.20279" target="_blank">From Ideal 
 
 - _2025.06_:  We release the <a href="https://huggingface.co/datasets/xcll/DenseWorld_Benchmark"><b>[DenseWorld Benchmark]</b></a>.
 
-- _2025.06_:  We release the checkpoints of the <a href="https://huggingface.co/xcll/DenseDiT_Model"><b>[DenseDiT model]</b></a> for all of 25 tasks in DenseWorld Benchmark.
+- _2025.06_:  We release the checkpoints of the <a href="https://huggingface.co/xcll/DenseDiT_Model"><b>[DenseDiT model]</b></a> for all of 25 tasks in the DenseWorld Benchmark.
 
 
 ## Installation
