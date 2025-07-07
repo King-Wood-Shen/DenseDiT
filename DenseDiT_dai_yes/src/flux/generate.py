@@ -78,7 +78,6 @@ def generate(
     config_path: str = None,
     model_config: Optional[Dict[str, Any]] = {},
     condition_scale: float = 1.0,
-    default_lora: bool = False,
     **params: dict,
 ):
     model_config = model_config or get_config(config_path).get("model", {})
@@ -173,20 +172,16 @@ def generate(
     )
 
     # 4.1. Prepare conditions
-    condition_latents, condition_ids, condition_type_ids = ([] for _ in range(3))
+    condition_latents, condition_ids = ([] for _ in range(2))
     use_condition = conditions is not None or []
     if use_condition:
         assert len(conditions) <= 1, "Only one condition is supported for now."
-        if not default_lora:
-            pipeline.set_adapters(conditions[0].condition_type)
         for condition in conditions:
-            tokens, ids, type_id = condition.encode(self)
+            tokens, ids = condition.encode(self)
             condition_latents.append(tokens)  # [batch_size, token_n, token_dim]
             condition_ids.append(ids)  # [token_n, id_dim(3)]
-            condition_type_ids.append(type_id)  # [token_n, 1]
         condition_latents = torch.cat(condition_latents, dim=1)
         condition_ids = torch.cat(condition_ids, dim=0)
-        condition_type_ids = torch.cat(condition_type_ids, dim=0)
 
     # 5. Prepare timesteps
     sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
@@ -232,7 +227,6 @@ def generate(
                 # Inputs of the condition (new feature)
                 condition_latents=condition_latents if use_condition else None,
                 condition_ids=condition_ids if use_condition else None,
-                condition_type_ids=condition_type_ids if use_condition else None,
                 # Inputs to the original transformer
                 hidden_states=latents,
                 # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)

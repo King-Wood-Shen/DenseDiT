@@ -17,19 +17,6 @@ train:
   gradient_checkpointing: true
   save_path: "runs"
 
-  # While the original FLUX model operates solely in a text-to-image generation setting, 
-  # DenseDiT extends this framework by incorporating additional inputs, including query and demonstration images. 
-  # We refer to these inputs as “extra control **conditions**”, 
-  # distinguishing them from the purely textual conditioning in standard text-to-image models.
-  condition_type: "densedit"
-  dataset:
-    type: "densedit"
-    cache_name: "data_512_2M"
-    condition_size: 512
-    target_size: 512
-    drop_text_prob: 0.0
-    drop_image_prob: 0.0
-
   wandb:
     project: "DenseDiT"
 

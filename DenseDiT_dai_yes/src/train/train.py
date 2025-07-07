@@ -66,15 +66,14 @@ def main():
                 descriptions[file_name] = description
         return descriptions
     descriptions = load_descriptions("paht/to/the/task's/description.txt")
+    # While the original FLUX model operates solely in a text-to-image generation setting, 
+    # DenseDiT extends this framework by incorporating additional inputs, including query and demonstration images. 
+    # We refer to these inputs as “extra control **conditions**”, 
+    # distinguishing them from the purely textual conditioning in standard text-to-image models.
     dataset = DenseDiTDataset(
         image_dir="paht/to/the/task's/images",
-        condition_dir="paht/to/the/task's/conditions",
+        condition_dir="paht/to/the/task's/querys",
         descriptions=descriptions,
-        condition_size=512,
-        target_size=512,
-        condition_type="densedit",
-        drop_text_prob=0,
-        drop_image_prob=0,
     )
 
     print("Dataset length:", len(dataset))

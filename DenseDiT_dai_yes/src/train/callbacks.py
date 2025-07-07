@@ -82,9 +82,6 @@ class TrainingCallback(L.Callback):
                 pl_module,
                 f"{self.save_path}/{self.run_name}/output",
                 f"lora_{self.total_steps}",
-                batch["condition_type"][
-                    0
-                ],  # Use the condition type from the current batch
             )
 
     @torch.no_grad()
@@ -94,7 +91,6 @@ class TrainingCallback(L.Callback):
         pl_module,
         save_path,
         file_name,
-        condition_type="densedit",
     ):
 
         generator = torch.Generator(device=pl_module.device)
@@ -102,27 +98,23 @@ class TrainingCallback(L.Callback):
 
         test_list = []
 
-        if condition_type == "densedit":
-            condition_img = (
-                Image.open("path/to/a/val/image/of/the/denseworld/task")
-                .convert("RGB")
-            )
-            test_list.append((condition_img, [0, 0], "The prompt for the task"))
-        else:
-            raise NotImplementedError
+        condition_img = (
+            Image.open("path/to/a/val/image/of/the/denseworld/task")
+            .convert("RGB")
+        )
+        test_list.append((condition_img, "The prompt for the task"))
 
         if not os.path.exists(save_path):
             os.makedirs(save_path)
-        for i, (condition_img, position_delta, prompt) in enumerate(test_list):
+        for i, (condition_img, prompt) in enumerate(test_list):
             condition = Condition(
-                condition_type=condition_type,
                 condition=condition_img.convert("RGB"),                
-                position_delta=position_delta,
             )
             res = generate(
                 pl_module.flux_pipe,
                 prompt=prompt,
                 conditions=[condition],
+                # please set the size of the image for the task
                 height=512,
                 width=512,
                 generator=generator,
@@ -130,5 +122,5 @@ class TrainingCallback(L.Callback):
                 default_lora=True,
             )
             res.images[0].save(
-                os.path.join(save_path, f"{file_name}_{condition_type}_{i}.jpg")
+                os.path.join(save_path, f"{file_name}_{i}.jpg")
             )

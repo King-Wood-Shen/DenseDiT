@@ -10,23 +10,11 @@ class DenseDiTDataset(Dataset):
         image_dir,
         condition_dir,
         descriptions,
-        condition_size: int = 512,
-        target_size: int = 512,
-        condition_type: str = "densedit",
-        drop_text_prob: float = 0,
-        drop_image_prob: float = 0,
-        return_pil_image: bool = False,
     ):
         self.image_dir = image_dir
         self.condition_dir = condition_dir
         self.descriptions = descriptions
         self.file_names = list(descriptions.keys())
-        self.condition_size = condition_size
-        self.target_size = target_size
-        self.condition_type = condition_type
-        self.drop_text_prob = drop_text_prob
-        self.drop_image_prob = drop_image_prob
-        self.return_pil_image = return_pil_image
 
         self.to_tensor = T.ToTensor()
     
@@ -51,8 +39,5 @@ class DenseDiTDataset(Dataset):
         return {
             "image": self.to_tensor(image),
             "condition": self.to_tensor(condition_img),
-            "condition_type": self.condition_type,
             "description": description,
-            "position_delta": np.array([0, 0]),
-            **({"pil_image": [image, condition_img]} if self.return_pil_image else {}),
         }

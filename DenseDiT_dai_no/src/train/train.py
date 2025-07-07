@@ -58,28 +58,24 @@ def main():
         print("Config:", config)
 
     # Initialize dataset and dataloader
-    if training_config["dataset"]["type"] == "densedit":
-        def load_descriptions(description_file):
-            descriptions = {}
-            with open(description_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    file_name, description = line.split(" ", 1)
-                    descriptions[file_name] = description
-            return descriptions
-        descriptions = load_descriptions("paht/to/the/task's/description.txt")
-        dataset = DenseDiTDataset(
-            image_dir="paht/to/the/task's/images",
-            condition_dir="paht/to/the/task's/conditions",
-            context_file = "paht/to/the/task's/demo_image.png",
-            descriptions=descriptions,
-            condition_size=512,
-            target_size=512,
-            condition_type="densedit",
-            drop_text_prob=0,
-            drop_image_prob=0,
-        )
-    else:
-        raise NotImplementedError
+    def load_descriptions(description_file):
+        descriptions = {}
+        with open(description_file, "r", encoding="utf-8") as f:
+            for line in f:
+                file_name, description = line.split(" ", 1)
+                descriptions[file_name] = description
+        return descriptions
+    descriptions = load_descriptions("paht/to/the/task's/description.txt")
+    # While the original FLUX model operates solely in a text-to-image generation setting, 
+    # DenseDiT extends this framework by incorporating additional inputs, including query and demonstration images. 
+    # We refer to these inputs as “extra control **conditions**”, 
+    # distinguishing them from the purely textual conditioning in standard text-to-image models.
+    dataset = DenseDiTDataset(
+        image_dir="paht/to/the/task's/images",
+        condition_dir="paht/to/the/task's/querys",
+        context_file = "paht/to/the/task's/demo_image.png",
+        descriptions=descriptions,
+    )
 
     print("Dataset length:", len(dataset))
     train_loader = DataLoader(

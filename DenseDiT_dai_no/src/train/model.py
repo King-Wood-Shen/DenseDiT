@@ -105,9 +105,7 @@ class DenseDiTModel(L.LightningModule):
         imgs = batch["image"]
         conditions = batch["condition"]
         context = batch["context"]
-        condition_types = batch["condition_type"]
         prompts = batch["description"]
-        position_delta = batch["position_delta"][0]
 
         # Prepare inputs
         with torch.no_grad():
@@ -131,21 +129,6 @@ class DenseDiTModel(L.LightningModule):
             # Prepare context
             context_latents, context_ids = encode_images(self.flux_pipe, context)
 
-            # Add position delta
-            condition_ids[:, 1] += position_delta[0]
-            condition_ids[:, 2] += position_delta[1]
-
-            # Prepare condition type
-            condition_type_ids = torch.tensor(
-                [
-                    Condition.get_type_id(condition_type)
-                    for condition_type in condition_types
-                ]
-            ).to(self.device)
-            condition_type_ids = (
-                torch.ones_like(condition_ids[:, 0]) * condition_type_ids[0]
-            ).unsqueeze(1)
-
             # Prepare guidance
             guidance = (
                 torch.ones_like(t).to(self.device)
@@ -161,7 +144,6 @@ class DenseDiTModel(L.LightningModule):
             # Inputs of the condition (new feature)
             condition_latents=condition_latents,
             condition_ids=condition_ids,
-            condition_type_ids=condition_type_ids,
             # Inputs of the context (new feature)
             context_latents=context_latents,
             context_ids=context_ids,

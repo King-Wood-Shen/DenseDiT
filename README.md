@@ -45,7 +45,7 @@ pip install -r requirements.txt
 2. Specify the wandb API key in ```train_densedit.sh``` (Optional).
 3. Start training
 ```bash
-bash train/scripts/train_densedit.sh
+bash train/script/train_densedit.sh
 ```
 
 ## Inference

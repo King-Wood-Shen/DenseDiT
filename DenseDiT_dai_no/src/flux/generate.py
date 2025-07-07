@@ -78,7 +78,6 @@ def generate(
     config_path: str = None,
     model_config: Optional[Dict[str, Any]] = {},
     condition_scale: float = 1.0,
-    default_lora: bool = False,
     **params: dict,
 ):
     model_config = model_config or get_config(config_path).get("model", {})
@@ -173,24 +172,20 @@ def generate(
     )
 
     # 4.1. Prepare conditions
-    condition_latents, condition_ids, condition_type_ids, context_latents, context_ids = ([] for _ in range(5))
+    condition_latents, condition_ids, context_latents, context_ids = ([] for _ in range(4))
     use_condition = conditions is not None or []
     if use_condition:
         assert len(conditions) <= 1, "Only one condition is supported for now."
-        if not default_lora:
-            pipeline.set_adapters(conditions[0].condition_type)
         for condition in conditions:
-            tokens, ids, context_tokens, context_id, type_id = condition.encode(self)
+            tokens, ids, context_tokens, context_id = condition.encode(self)
             condition_latents.append(tokens)  # [batch_size, token_n, token_dim]
             condition_ids.append(ids)  # [token_n, id_dim(3)]
             context_latents.append(context_tokens)
             context_ids.append(context_id)
-            condition_type_ids.append(type_id)  # [token_n, 1]
         condition_latents = torch.cat(condition_latents, dim=1)
         condition_ids = torch.cat(condition_ids, dim=0)
         context_latents = torch.cat(context_latents, dim=1)
         context_ids = torch.cat(context_ids, dim=0)
-        condition_type_ids = torch.cat(condition_type_ids, dim=0)
 
     # 5. Prepare timesteps
     sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
@@ -236,9 +231,7 @@ def generate(
                 # Inputs of the condition (new feature)
                 condition_latents=condition_latents if use_condition else None,
                 condition_ids=condition_ids if use_condition else None,
-                condition_type_ids=condition_type_ids if use_condition else None,
                 # Inputs of the context (new feature)
-                #TODO: separate the context and condition
                 context_latents=context_latents if use_condition else None,
                 context_ids=context_ids if use_condition else None,
                 # Inputs to the original transformer

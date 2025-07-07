@@ -48,7 +48,6 @@ def tranformer_forward(
     transformer: FluxTransformer2DModel,
     condition_latents: torch.Tensor,
     condition_ids: torch.Tensor,
-    condition_type_ids: torch.Tensor,
     model_config: Optional[Dict[str, Any]] = {},
     c_t=0,
     **params: dict,
@@ -130,7 +129,6 @@ def tranformer_forward(
     ids = torch.cat((txt_ids, img_ids), dim=0)
     image_rotary_emb = self.pos_embed(ids)
     if use_condition:
-        # condition_ids[:, :1] = condition_type_ids
         cond_rotary_emb = self.pos_embed(condition_ids)
 
     # hidden_states = torch.cat([hidden_states, condition_latents], dim=1)

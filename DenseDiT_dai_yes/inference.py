@@ -13,8 +13,7 @@ pipe = FluxPipeline.from_pretrained(
 pipe = pipe.to("cuda")
 
 pipe.load_lora_weights(
-    "ptah/to/the/lora/weights/of/the/denseworld/task",
-    adapter_name="densedit",
+    "ptah/to/the/lora/weights/of/the/denseworld/task"
 )
 
 # Set the height and width for the generated images of the denseworld task
@@ -28,7 +27,7 @@ for root, dirs, files in os.walk('path/to/the/test/images/of/the/denseworld/task
         file_path = os.path.join(root, name)
         image = Image.open(file_path).convert("RGB")
         prompt = "The prompt for the task"
-        condition = Condition("densedit", condition = image)
+        condition = Condition(condition = image)
         seed_everything()
         result_img = generate(
             pipe,
