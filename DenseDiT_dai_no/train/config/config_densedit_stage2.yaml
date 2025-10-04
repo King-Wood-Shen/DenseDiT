@@ -1,0 +1,38 @@
+# Model configuration
+flux_path: "/home/users/astar/ares/qianhang/scratch/chengyou/hugging/Kontext"
+dtype: "bfloat16"
+
+# Training configuration
+train:
+  batch_size: 1
+  accumulate_grad_batches: 1
+  dataloader_workers: 4
+  save_interval: 5000
+  sample_interval: 20
+  max_steps: -1
+  gradient_checkpointing: true
+  save_path: "runs"
+  
+  # Optimizer configuration
+  optimizer:
+    type: "AdamW"
+    params:
+      lr: 1.0e-4
+      betas: [0.9, 0.999]
+      eps: 1.0e-8
+      weight_decay: 0.01
+  
+  # Checkpoint and logging
+  save_path: "./output"
+  save_every_n_steps: 1000
+  log_every_n_steps: 50
+  
+  # WandB configuration
+  wandb:
+    project: "DenseDiT"
+    enabled: true
+
+# Model specific configuration
+model:
+  use_lora: false
+  train_transformer: true
