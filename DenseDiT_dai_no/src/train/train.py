@@ -1,215 +1,84 @@
-import pytorch_lightning as pl
-from pytorch_lightning.strategies import DeepSpeedStrategy
-from pytorch_lightning.loggers import CSVLogger
-from torch.utils.data import DataLoader, DistributedSampler
+import lightning as L
+from lightning.pytorch.strategies import DeepSpeedStrategy
+from torch.utils.data import DataLoader
 import torch
 import yaml
 import os
 import time
 import json
-import torch.distributed as dist
+
+
+from .callbacks import TrainingCallback
 from .data import DenseDiTDataset
 from .model import DenseDiTModel
 from .callbacks import TrainingCallback
+from ..utils.memory_tracker import MemoryProfiler
+
 
 def get_rank():
-    try:
-        rank = int(os.environ.get("LOCAL_RANK"))
-    except:
-        rank = 0
-    return rank
+    """获取当前进程的 rank（Lightning 会自动设置环境变量）"""
+    return int(os.environ.get("LOCAL_RANK", 0))
+
 
 def get_world_size():
-    try:
-        world_size = int(os.environ.get("WORLD_SIZE"))
-    except:
-        world_size = 1
-    return world_size
+    """获取总进程数（Lightning 会自动设置环境变量）"""
+    return int(os.environ.get("WORLD_SIZE", 1))
 
-def get_config():
+
+def load_config():
+    """加载统一配置文件"""
     config_path = os.environ.get("XFL_CONFIG")
     assert config_path is not None, "Please set the XFL_CONFIG environment variable"
     with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    return config
+        return yaml.safe_load(f)
 
-def init_wandb(wandb_config, run_name):
-    import wandb
-    try:
-        assert os.environ.get("WANDB_API_KEY") is not None
-        wandb.init(
-            project=wandb_config["project"],
-            name=run_name,
-            config={},
-        )
-    except Exception as e:
-        print("Failed to initialize WanDB:", e)
 
-def main():
-    # 初始化
-    try:
-        # 方法1: 检查DeepSpeedStrategy是否可用
-        from pytorch_lightning.strategies import DeepSpeedStrategy
-        deepspeed_available = True
-        print("DeepSpeedStrategy is available")
-    except ImportError:
-        deepspeed_available = False
-        print("DeepSpeedStrategy is not available")
+def build_deepspeed_config(config, world_size):
+    """
+    根据简化配置构建完整的 DeepSpeed 配置
     
-    # 方法2: 直接检查deepspeed包
-    try:
-        import deepspeed
-        print(f"DeepSpeed version: {deepspeed.__version__}")
-        deepspeed_available = True
-    except ImportError:
-        print("DeepSpeed package is not installed")
-        deepspeed_available = False
-    rank = get_rank()
-    world_size = get_world_size()
-    is_main_process = (rank == 0)
+    Args:
+        config: 统一配置字典
+        world_size: GPU 数量
+    """
+    model_config = config["model"]
+    train_config = config["train"]
+    ds_config = config["deepspeed"]
     
-    # torch.cuda.set_device(rank)
-    config = get_config()
-    training_config = config["train"]
-    run_name = time.strftime("%Y%m%d-%H%M%S")
-
-    # 初始化WanDB
-    wandb_config = training_config.get("wandb", None)
-    if wandb_config is not None and is_main_process:
-        init_wandb(wandb_config, run_name)
-
-    print(f"Rank: {rank}, World Size: {world_size}")
-    if is_main_process:
-        print("Config:", config)
-
-    # 初始化数据集和dataloader
-    def load_descriptions(description_file):
-        descriptions = {}
-        with open(description_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                if " " not in line:
-                    continue
-                file_name, description = line.split(" ", 1)
-                descriptions[file_name] = description
-        return descriptions
+    # 获取 ZeRO stage 和 offload 配置
+    zero_stage = ds_config.get("zero_stage", 3)
+    offload = ds_config.get("offload", "none")
     
-    descriptions = load_descriptions("/home/users/astar/ares/qianhang/scratch/chengyou/sx/sx_data/rectify/image_descriptions.txt")
+    # 基础 ZeRO 配置
+    zero_optimization = {
+        "stage": zero_stage,
+        "overlap_comm": ds_config.get("overlap_comm", True),
+        "contiguous_gradients": ds_config.get("contiguous_gradients", True),
+    }
     
-    dataset = DenseDiTDataset(
-        image_dir="/home/users/astar/ares/qianhang/scratch/chengyou/sx/sx_data/rectify/pairs",
-        condition_dir="/home/users/astar/ares/qianhang/scratch/chengyou/sx/sx_data/rectify/pairs_pf",
-        context_file="/home/users/astar/ares/qianhang/scratch/chengyou/sx/sx_data/rectify/pairs",
-        descriptions=descriptions,
-    )
-
-    print("Dataset length:", len(dataset))
+    # 根据 offload 设置配置 offload 策略
+    if offload == "none":
+        zero_optimization["offload_optimizer"] = {"device": "none"}
+        zero_optimization["offload_param"] = {"device": "none"}
+    elif offload == "optimizer":
+        zero_optimization["offload_optimizer"] = {
+            "device": "cpu",
+            "pin_memory": True
+        }
+        zero_optimization["offload_param"] = {"device": "none"}
+    elif offload == "all":
+        zero_optimization["offload_optimizer"] = {
+            "device": "cpu",
+            "pin_memory": True
+        }
+        zero_optimization["offload_param"] = {
+            "device": "cpu",
+            "pin_memory": True
+        }
     
-    # 创建分布式采样器
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=True,
-        drop_last=True
-    )
-    
-    train_loader = DataLoader(
-        dataset,
-        batch_size=training_config["batch_size"],
-        sampler=sampler,
-        shuffle=False,
-        num_workers=training_config["dataloader_workers"],
-        pin_memory=True,
-        drop_last=True,
-    )
-
-    # 初始化模型
-    trainable_model = DenseDiTModel(
-        flux_pipe_id=config["flux_path"],
-        device="cuda",
-        dtype=getattr(torch, config["dtype"]),
-        optimizer_config=training_config["optimizer"],
-        model_config=config.get("model", {}),
-        gradient_checkpointing=training_config.get("gradient_checkpointing", False),
-    )
-
-    # Callbacks for logging and saving checkpoints
-    training_callbacks = (
-        [TrainingCallback(run_name, training_config=training_config)]
-        if is_main_process
-        else []
-    )
-    
-    # # DeepSpeed ZeRO Stage 2 配置 - 这次确保使用
-    # deepspeed_config = {
-    #     "zero_optimization": {
-    #         "stage": 2,
-    #         "allgather_partitions": True,
-    #         "allgather_bucket_size": 2e8,  # 减小bucket大小
-    #         "reduce_scatter": True,
-    #         "reduce_bucket_size": 2e8,
-    #         "overlap_comm": True,
-    #         "contiguous_gradients": True,
-    #         "cpu_offload": False,
-    #     },
-    #     "fp16": {
-    #         "enabled": config["dtype"] == "float16",
-    #     },
-    #     "bf16": {
-    #         "enabled": config["dtype"] == "bfloat16",
-    #     },
-    #     "optimizer": {
-    #         "type": "AdamW",
-    #         "params": {
-    #             "lr": training_config["optimizer"]["lr"],
-    #             "betas": [0.9, 0.999],
-    #             "eps": 1e-8,
-    #             "weight_decay": 0.01,
-    #         }
-    #     },
-    #     "gradient_accumulation_steps": training_config["accumulate_grad_batches"],
-    #     "gradient_clipping": training_config.get("gradient_clip_val", 1.0),
-    #     "train_batch_size": training_config["batch_size"] * world_size * training_config["accumulate_grad_batches"],
-    #     "train_micro_batch_size_per_gpu": training_config["batch_size"],
-    #     "wall_clock_breakdown": True,  # 改为True以显示更多信息
-    #     "steps_per_print": 10,  # 更频繁的打印
-    # }
-    # 完整的ZeRO Stage 3配置（根据你的需求选择）
-    deepspeed_config = {
-        "zero_optimization": {
-            "stage": 3,
-            # 选项1: 完全在GPU上（最快，但内存占用最高）
-            "offload_optimizer": {
-                "device": "none"  # 保持在GPU上
-            },
-            "offload_param": {
-                "device": "none"  # 保持在GPU上
-            },
-            
-            # 选项2: 优化器offload到CPU（平衡性能和内存）
-            # "offload_optimizer": {
-            #     "device": "cpu",
-            #     "pin_memory": True
-            # },
-            # "offload_param": {
-            #     "device": "none"
-            # },
-            
-            # 选项3: 全部offload到CPU（最省内存，但速度较慢）
-            # "offload_optimizer": {
-            #     "device": "cpu", 
-            #     "pin_memory": True
-            # },
-            # "offload_param": {
-            #     "device": "cpu",
-            #     "pin_memory": True
-            # },
-            
-            "overlap_comm": True,
-            "contiguous_gradients": True,
+    # Stage 3 特定配置
+    if zero_stage == 3:
+        zero_optimization.update({
             "sub_group_size": 1e9,
             "reduce_bucket_size": "auto",
             "stage3_prefetch_bucket_size": "auto",
@@ -217,9 +86,24 @@ def main():
             "stage3_max_live_parameters": 1e9,
             "stage3_max_reuse_distance": 1e9,
             "stage3_gather_16bit_weights_on_model_save": True
-        },
+        })
+    # Stage 2 特定配置
+    elif zero_stage == 2:
+        zero_optimization.update({
+            "allgather_partitions": True,
+            "allgather_bucket_size": 2e8,
+            "reduce_scatter": True,
+            "reduce_bucket_size": 2e8,
+        })
+    
+    # 混合精度配置
+    mixed_precision = model_config.get("mixed_precision", "bfloat16")
+    
+    # 构建完整配置
+    deepspeed_config = {
+        "zero_optimization": zero_optimization,
         "fp16": {
-            "enabled": config["dtype"] == "float16",
+            "enabled": mixed_precision == "float16",
             "auto_cast": False,
             "loss_scale": 0,
             "initial_scale_power": 16,
@@ -228,73 +112,220 @@ def main():
             "min_loss_scale": 1
         },
         "bf16": {
-            "enabled": config["dtype"] == "bfloat16"
+            "enabled": mixed_precision == "bfloat16"
         },
-        "optimizer": {
-            "type": "AdamW",
-            "params": {
-                "lr": training_config["optimizer"]["lr"],
-                "betas": [0.9, 0.999],
-                "eps": 1e-8,
-                "weight_decay": training_config["optimizer"].get("weight_decay", 0.01),
-            }
-        },
-        "scheduler": {
-            "type": "WarmupLR",
-            "params": {
-                "warmup_min_lr": 0,
-                "warmup_max_lr": training_config["optimizer"]["lr"],
-                "warmup_num_steps": training_config.get("warmup_steps", 1000),
-            }
-        },
-        "gradient_accumulation_steps": training_config["accumulate_grad_batches"],
-        "gradient_clipping": training_config.get("gradient_clip_val", 1.0),
-        "train_batch_size": training_config["batch_size"] * world_size * training_config["accumulate_grad_batches"],
-        "train_micro_batch_size_per_gpu": training_config["batch_size"],
-        "wall_clock_breakdown": True,
-        "steps_per_print": 10,
+        "gradient_clipping": train_config.get("gradient_clip_val", 1.0),
+        "train_batch_size": train_config["batch_size"] * world_size * train_config["accumulate_grad_batches"],
+        "train_micro_batch_size_per_gpu": train_config["batch_size"],
+        "wall_clock_breakdown": ds_config.get("wall_clock_breakdown", False),
+        "steps_per_print": ds_config.get("steps_per_print", 10),
         "dump_state": False,
     }
     
-    # 初始化trainer with DeepSpeed ZeRO Stage 2
+    return deepspeed_config
+
+
+def print_training_info(rank, world_size, run_name, config, ds_config):
+    """打印训练信息"""
+    model_config = config["model"]
+    train_config = config["train"]
+    
+    print("=" * 80)
+    print(f"Training Configuration:")
+    print(f"  Rank: {rank}/{world_size}")
+    print(f"  Run name: {run_name}")
+    print(f"  Model path: {model_config['flux_path']}")
+    print(f"  Model dtype: {model_config.get('model_dtype', 'bfloat16')}")
+    print(f"  Mixed precision: {model_config.get('mixed_precision', 'bfloat16')}")
+    print(f"  Batch size per GPU: {train_config['batch_size']}")
+    print(f"  Gradient accumulation: {train_config['accumulate_grad_batches']}")
+    print(f"  Effective batch size: {ds_config['train_batch_size']}")
+    print(f"  DeepSpeed ZeRO Stage: {ds_config['zero_optimization']['stage']}")
+    print(f"  Offload strategy: {config['deepspeed'].get('offload', 'none')}")
+    print(f"  Training precision: {'BF16 mixed' if ds_config['bf16']['enabled'] else 'FP16 mixed' if ds_config['fp16']['enabled'] else 'FP32'}")
+    print(f"  Gradient checkpointing: {train_config.get('gradient_checkpointing', False)}")
+    print("=" * 80)
+
+
+def init_wandb(wandb_config, run_name, config):
+    """初始化 Weights & Biases"""
+    import wandb
+    try:
+        assert os.environ.get("WANDB_API_KEY") is not None
+        wandb.init(
+            project=wandb_config["project"],
+            name=run_name,
+            config=config,
+        )
+        return True
+    except Exception as e:
+        print(f"Failed to initialize WanDB: {e}")
+        return False
+
+
+def main():
+    # 获取分布式环境信息
+    rank = get_rank()
+    world_size = get_world_size()
+    is_main_process = (rank == 0)
+    
+    # 加载统一配置
+    config = load_config()
+    model_config = config["model"]
+    train_config = config["train"]
+    run_name = time.strftime("%Y%m%d-%H%M%S")
+
+    # 构建 DeepSpeed 配置
+    deepspeed_config = build_deepspeed_config(config, world_size)
+    
+    # 打印训练信息
+    if is_main_process:
+        print_training_info(rank, world_size, run_name, config, deepspeed_config)
+
+    # 初始化 WandB
+    wandb_config = train_config.get("wandb")
+    if wandb_config and wandb_config.get("enabled") and is_main_process:
+        init_wandb(wandb_config, run_name, config)
+    
+    # 初始化 DeepSpeed 策略
     strategy = DeepSpeedStrategy(
-        config=deepspeed_config,  # 这里正确传递配置
-        logging_batch_size_per_gpu=training_config["batch_size"],
-        allgather_bucket_size=deepspeed_config["zero_optimization"]["allgather_bucket_size"],
-        reduce_bucket_size=deepspeed_config["zero_optimization"]["reduce_bucket_size"],
+        config=deepspeed_config,
+        logging_batch_size_per_gpu=train_config["batch_size"],
     )
     
-    trainer = pl.Trainer(
-        accelerator="gpu",
-        devices=world_size,
-        accumulate_grad_batches=training_config["accumulate_grad_batches"],
-        callbacks=training_callbacks,
-        enable_checkpointing=True,
-        enable_progress_bar=is_main_process,  # 只在主进程显示进度条
-        logger=True,
-        strategy=strategy,  # 使用DeepSpeed策略
-        max_steps=training_config.get("max_steps", -1),
-        max_epochs=training_config.get("max_epochs", -1),
-        gradient_clip_val=training_config.get("gradient_clip_val", 0.5),
-        precision="bf16" if config["dtype"] == "bfloat16" else "16",
+    # 初始化 Memory Profiler（仅主进程）
+    memory_profiler = None
+    if is_main_process:
+        mem_logfile = f'memory_{run_name}.log'
+        memory_profiler = MemoryProfiler(
+            enable_tensor_accumulation=True, 
+            log_file=mem_logfile
+        )
+        memory_profiler.snapshot("start")
+
+    # ===== 初始化数据集 =====
+    # TODO: 取消注释并配置你的数据集
+    # 注意：Lightning 会自动处理分布式采样，不需要手动创建 DistributedSampler
+    def load_descriptions(description_file):
+        descriptions = {}
+        with open(description_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or " " not in line:
+                    continue
+                file_name, description = line.split(" ", 1)
+                descriptions[file_name] = description
+        return descriptions
+    
+    descriptions = load_descriptions(train_config["description_file"])
+    
+    dataset = DenseDiTDataset(
+        image_dir=train_config["image_dir"],
+        condition_dir=train_config["condition_dir"],
+        context_file=train_config["context_file"],
+        descriptions=descriptions,
     )
 
-    setattr(trainer, "training_config", training_config)
-
-    # 保存配置
-    save_path = training_config.get("save_path", "./output")
     if is_main_process:
-        os.makedirs(f"{save_path}/{run_name}", exist_ok=True)
-        with open(f"{save_path}/{run_name}/config.yaml", "w") as f:
-            yaml.dump(config, f)
-        
-        # 保存DeepSpeed配置
-        with open(f"{save_path}/{run_name}/deepspeed_config.json", "w") as f:
-            json.dump(deepspeed_config, f, indent=2)
+        print(f"Dataset length: {len(dataset)}")
+        if memory_profiler:
+            memory_profiler.snapshot("after_dataset_load")
+    
+    # Lightning 会自动处理分布式采样，只需创建普通的 DataLoader
+    train_loader = DataLoader(
+        dataset,
+        batch_size=train_config["batch_size"],
+        shuffle=True,  # Lightning 会自动转换为分布式采样
+        num_workers=train_config["dataloader_workers"],
+        pin_memory=True,
+        drop_last=True,
+    )
 
-    # 开始训练
-    print(f"Starting training with DeepSpeed ZeRO Stage 2...")
-    trainer.fit(trainable_model, train_loader)
+    if is_main_process and memory_profiler:
+        memory_profiler.snapshot("after_dataloader")
+
+    # ===== 初始化模型 =====
+    trainable_model = DenseDiTModel(
+        flux_pipe_id=model_config["flux_path"],
+        train_dtype=model_config.get("model_dtype", "float32"),
+        inference_dtype=model_config.get("mixed_precision", "bfloat16"),
+        optimizer_config=train_config["optimizer"],
+        model_config=model_config,
+        gradient_checkpointing=train_config.get("gradient_checkpointing", False)
+    )
+    trainable_model.train()
+
+    print("Model parameter on ", next(trainable_model.parameters()).device)
+    if is_main_process and memory_profiler:
+        memory_profiler.register_model(trainable_model, "DenseDiTModel")
+        memory_profiler.snapshot("after_model_load")
+
+    # ===== 初始化 Callbacks =====
+    training_callbacks = []
+    if is_main_process:
+        # 添加训练回调
+        training_callbacks.append(
+            TrainingCallback(run_name, training_config=train_config)
+        )
+
+    # ===== 初始化 Trainer =====
+    # 设置混合精度
+    mixed_precision = model_config.get("mixed_precision", "bfloat16")
+    if mixed_precision == "bfloat16":
+        precision = "bf16-mixed"
+    elif mixed_precision == "float16":
+        precision = "16-mixed"
+    else:
+        precision = "32"
+    
+    trainer = L.Trainer(
+        accelerator="gpu",
+        devices=world_size,
+        accumulate_grad_batches=train_config["accumulate_grad_batches"],
+        callbacks=training_callbacks,
+        enable_checkpointing=True,
+        enable_progress_bar=is_main_process,
+        logger=True,
+        strategy=strategy,
+        max_steps=train_config.get("max_steps", -1),
+        max_epochs=train_config.get("max_epochs", -1),
+        gradient_clip_val=train_config.get("gradient_clip_val", 1.0),
+        precision=precision,
+        log_every_n_steps=train_config.get("log_every_n_steps", 50),
+    )
+
+    if is_main_process and memory_profiler:
+        memory_profiler.snapshot("after_trainer_init")
+    
+    # 附加训练配置到 trainer
+    setattr(trainer, "training_config", train_config)
+
+    # ===== 保存配置 =====
+    # save_path = train_config.get("save_path", "./output")
+    # if is_main_process:
+    #     run_dir = f"{save_path}/{run_name}"
+    #     os.makedirs(run_dir, exist_ok=True)
+        
+    #     # 保存配置
+    #     with open(f"{run_dir}/config.yaml", "w") as f:
+    #         yaml.dump(config, f)
+        
+    #     # 保存生成的 DeepSpeed 配置（用于调试）
+    #     with open(f"{run_dir}/deepspeed_config.json", "w") as f:
+    #         json.dump(deepspeed_config, f, indent=2)
+        
+    #     print(f"Configurations saved to: {run_dir}")
+
+    if is_main_process and memory_profiler:
+        memory_profiler.snapshot("before_training")
+        memory_profiler.print_full_report()
+    
+    # ===== 开始训练 =====
+    zero_stage = config["deepspeed"].get("zero_stage", 3)
+    offload = config["deepspeed"].get("offload", "none")
+    print(f"Starting training with DeepSpeed ZeRO Stage {zero_stage} (offload: {offload})...")
+    trainer.fit(trainable_model, train_loader)  # 取消注释以开始训练
+
 
 if __name__ == "__main__":
     main()
