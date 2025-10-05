@@ -74,9 +74,9 @@ class DenseDiTModel(L.LightningModule):
         
         # 冻结不需要训练的组件
         print("Freezing non-trainable components...")
-        self.flux_pipe.text_encoder.requires_grad_(False).eval()
-        self.flux_pipe.text_encoder_2.requires_grad_(False).eval()
-        self.flux_pipe.vae.requires_grad_(False).eval()
+        self.flux_pipe.text_encoder.requires_grad_(False)
+        self.flux_pipe.text_encoder_2.requires_grad_(False)
+        self.flux_pipe.vae.requires_grad_(False)
         self.flux_pipe.text_encoder.to(inference_dtype)
         self.flux_pipe.text_encoder_2.to(inference_dtype)
         self.flux_pipe.vae.to(train_dtype)
@@ -166,47 +166,41 @@ class DenseDiTModel(L.LightningModule):
         context = batch["context"]
         prompts = batch["description"]
 
-        # Prepare inputs
-        with torch.no_grad():
-            # Prepare image input
-            x_0, img_ids = encode_images(self.flux_pipe, imgs, device=self.device, dtype=self.train_dtype)
-            # Prepare text input
-            prompt_embeds, pooled_prompt_embeds, text_ids = prepare_text_input(
-                self.flux_pipe, prompts, device=self.device, dtype=self.train_dtype
-            )
+        # Prepare image input
+        x_0, img_ids = encode_images(self.flux_pipe, imgs, device=self.device, dtype=self.train_dtype)
+        # Prepare text input
+        prompt_embeds, pooled_prompt_embeds, text_ids = prepare_text_input(
+            self.flux_pipe, prompts, device=self.device, dtype=self.train_dtype
+        )
 
-            # Prepare t and x_t
-            t = torch.sigmoid(torch.randn((imgs.shape[0],), device=self.device)) # (B,)
-            x_1 = torch.randn_like(x_0, device=self.device) # (B, Seq_len, C)
-            t_ = t.view(-1, 1, 1) # (B, 1, 1)
-            x_t = ((1 - t_) * x_0 + t_ * x_1).to(self.train_dtype)
+        # Prepare t and x_t
+        t = torch.sigmoid(torch.randn((imgs.shape[0],), device=self.device)) # (B,)
+        x_1 = torch.randn_like(x_0, device=self.device) # (B, Seq_len, C)
+        t_ = t.view(-1, 1, 1) # (B, 1, 1)
+        x_t = ((1 - t_) * x_0 + t_ * x_1).to(self.train_dtype)
 
-            # Prepare conditions
-            condition_latents, condition_ids = encode_images(self.flux_pipe, conditions, device=self.device, dtype=self.train_dtype)
-            
-            # Prepare context
-            context_latents, context_ids = encode_images(self.flux_pipe, context, device=self.device, dtype=self.train_dtype)
-
-            # Prepare guidance
-            guidance = (
-                torch.ones_like(t)
-                if self.transformer.config.guidance_embeds
-                else None
-            )
-            
-            # Concatenate latents
-            latent_ids = torch.cat([img_ids, condition_ids, context_ids], dim=0) # (Seq_len * 3, 3)
-            latent_model_input = torch.cat([x_t, condition_latents, context_latents], dim=1)
+        # Prepare conditions
+        condition_latents, condition_ids = encode_images(self.flux_pipe, conditions, device=self.device, dtype=self.train_dtype)
         
-        print("Input shapes", "latent_model_input:", latent_model_input.shape,
-              "prompt_embeds:", prompt_embeds.shape,
-              "pooled_prompt_embeds:", pooled_prompt_embeds.shape,
-              "text_ids:", text_ids.shape,
-              "latent_ids:", latent_ids.shape)
-        with torch.autocast(device_type=self.device.type, dtype=self.train_dtype):  
+        # Prepare context
+        context_latents, context_ids = encode_images(self.flux_pipe, context, device=self.device, dtype=self.train_dtype)
+
+        # Prepare guidance
+        guidance = (
+            torch.ones_like(t)
+            if self.transformer.config.guidance_embeds
+            else None
+        )
+        
+        # Concatenate latents
+        latent_ids = torch.cat([img_ids, condition_ids, context_ids], dim=0) # (Seq_len * 3, 3)
+        latent_model_input = torch.cat([x_t, condition_latents, context_latents], dim=1)
+        
+        latent_model_input.requires_grad_(True)
+        with torch.autocast(device_type=self.device.type, dtype=self.train_dtype):
             # Forward pass
             transformer_out = self.transformer(
-                hidden_states=latent_model_input.float(),
+                hidden_states=latent_model_input,
                 timestep=t,
                 guidance=guidance,
                 pooled_projections=pooled_prompt_embeds,
@@ -218,7 +212,7 @@ class DenseDiTModel(L.LightningModule):
             )
         
         pred = transformer_out[0]
-        pred = pred[:, :, :x_t.size(2)]  # 裁剪到原始图像大小
+        pred = pred[:, :x_t.size(1)]  # 裁剪到原始图像大小
         
         # Compute loss
         target = x_1 - x_0
