@@ -195,7 +195,7 @@ class DenseDiTModel(L.LightningModule):
             )
             
             # Concatenate latents
-            latent_ids = torch.cat([img_ids, condition_ids, context_ids], dim=1)
+            latent_ids = torch.cat([img_ids, condition_ids, context_ids], dim=0) # (Seq_len * 3, 3)
             latent_model_input = torch.cat([x_t, condition_latents, context_latents], dim=1)
         
         print("Input shapes", "latent_model_input:", latent_model_input.shape,
