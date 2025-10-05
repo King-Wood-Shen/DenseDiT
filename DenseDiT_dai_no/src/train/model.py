@@ -79,6 +79,8 @@ class DenseDiTModel(L.LightningModule):
         self.flux_pipe.vae.requires_grad_(False).eval()
         self.flux_pipe.text_encoder.to(inference_dtype)
         self.flux_pipe.text_encoder_2.to(inference_dtype)
+        self.flux_pipe.vae.to(train_dtype)
+        self.flux_pipe.transformer.to(train_dtype)
         
         # 设置可训练参数
         self._setup_trainable_params()
@@ -174,9 +176,9 @@ class DenseDiTModel(L.LightningModule):
             )
 
             # Prepare t and x_t
-            t = torch.sigmoid(torch.randn((imgs.shape[0],), device=self.device))
-            x_1 = torch.randn_like(x_0, device=self.device)
-            t_ = t.view(-1, 1, 1, 1)
+            t = torch.sigmoid(torch.randn((imgs.shape[0],), device=self.device)) # (B,)
+            x_1 = torch.randn_like(x_0, device=self.device) # (B, Seq_len, C)
+            t_ = t.view(-1, 1, 1) # (B, 1, 1)
             x_t = ((1 - t_) * x_0 + t_ * x_1).to(self.train_dtype)
 
             # Prepare conditions
@@ -194,20 +196,26 @@ class DenseDiTModel(L.LightningModule):
             
             # Concatenate latents
             latent_ids = torch.cat([img_ids, condition_ids, context_ids], dim=1)
-            latent_model_input = torch.cat([x_t, condition_latents, context_latents], dim=2)
+            latent_model_input = torch.cat([x_t, condition_latents, context_latents], dim=1)
         
-        # Forward pass
-        transformer_out = self.transformer(
-            hidden_states=latent_model_input,
-            timestep=t,
-            guidance=guidance,
-            pooled_projections=pooled_prompt_embeds,
-            encoder_hidden_states=prompt_embeds,
-            txt_ids=text_ids,
-            img_ids=latent_ids,
-            joint_attention_kwargs=None,
-            return_dict=False,
-        )
+        print("Input shapes", "latent_model_input:", latent_model_input.shape,
+              "prompt_embeds:", prompt_embeds.shape,
+              "pooled_prompt_embeds:", pooled_prompt_embeds.shape,
+              "text_ids:", text_ids.shape,
+              "latent_ids:", latent_ids.shape)
+        with torch.autocast(device_type=self.device.type, dtype=self.train_dtype):  
+            # Forward pass
+            transformer_out = self.transformer(
+                hidden_states=latent_model_input.float(),
+                timestep=t,
+                guidance=guidance,
+                pooled_projections=pooled_prompt_embeds,
+                encoder_hidden_states=prompt_embeds,
+                txt_ids=text_ids,
+                img_ids=latent_ids,
+                joint_attention_kwargs=None,
+                return_dict=False,
+            )
         
         pred = transformer_out[0]
         pred = pred[:, :, :x_t.size(2)]  # 裁剪到原始图像大小
