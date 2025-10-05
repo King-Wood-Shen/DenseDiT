@@ -13,11 +13,13 @@ class DenseDiTDataset(Dataset):
         condition_dir,
         context_file,
         descriptions,
+        resize=(512, 512)
     ):
         self.image_dir = image_dir
         self.condition_dir = condition_dir
         self.context_file = context_file
         self.descriptions = descriptions
+        self.resize = resize
         self.file_names = list(descriptions.keys())
 
         self.to_tensor = T.ToTensor()
@@ -34,10 +36,10 @@ class DenseDiTDataset(Dataset):
         image_path = os.path.join(image_dir, f"{base}.jpg")
         condition_path = os.path.join(condition_dir, f"{base}_pf.jpg")
         # print(image_path, condition_path, context_image, "111111111")
-        image = Image.open(image_path).convert("RGB").resize((256, 256))
-        condition_image = Image.open(condition_path).convert("RGB").resize((256, 256))
-        context_image = Image.open(context_image).convert("RGB").resize((256, 256))
-        
+        image = Image.open(image_path).convert("RGB").resize(self.resize)
+        condition_image = Image.open(condition_path).convert("RGB").resize(self.resize)
+        context_image = Image.open(context_image).convert("RGB").resize(self.resize)
+
         return image, condition_image, context_image
 
     def __len__(self):

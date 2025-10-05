@@ -1,5 +1,6 @@
 import lightning as L
 from lightning.pytorch.strategies import DeepSpeedStrategy
+from lightning.pytorch.callbacks import ModelSummary
 from torch.utils.data import DataLoader
 import torch
 import yaml
@@ -175,6 +176,11 @@ def main():
     train_config = config["train"]
     run_name = time.strftime("%Y%m%d-%H%M%S")
 
+    # Enable TF32 for faster training on Ampere GPUs,
+    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+    if config['train'].get("allow_tf32", False):
+        torch.backends.cuda.matmul.allow_tf32 = True
+
     # 构建 DeepSpeed 配置
     deepspeed_config = build_deepspeed_config(config, world_size)
     
@@ -204,7 +210,6 @@ def main():
         memory_profiler.snapshot("start")
 
     # ===== 初始化数据集 =====
-    # TODO: 取消注释并配置你的数据集
     # 注意：Lightning 会自动处理分布式采样，不需要手动创建 DistributedSampler
     def load_descriptions(description_file):
         descriptions = {}
@@ -224,6 +229,7 @@ def main():
         condition_dir=train_config["condition_dir"],
         context_file=train_config["context_file"],
         descriptions=descriptions,
+        resize=train_config.get("image_size", (512, 512))
     )
 
     if is_main_process:
@@ -261,7 +267,7 @@ def main():
         memory_profiler.snapshot("after_model_load")
 
     # ===== 初始化 Callbacks =====
-    training_callbacks = []
+    training_callbacks = [ModelSummary(max_depth=0)]  # 禁用默认的模型 summary
     if is_main_process:
         # 添加训练回调
         training_callbacks.append(

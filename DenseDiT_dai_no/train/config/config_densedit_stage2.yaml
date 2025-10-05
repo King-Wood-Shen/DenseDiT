@@ -8,10 +8,14 @@ model:
 
 # ==================== 训练配置 ====================
 train:
+  # 设备配置
+  allow_tf32: true   # 允许在 Ampere GPU 上使用 TF32（提升速度）
+
   # 数据配置
   batch_size: 1
   accumulate_grad_batches: 4
-  dataloader_workers: 4
+  dataloader_workers: 8
+  image_size: [256, 256]  # 输入图像尺寸（宽, 高）
   
   # 数据集路径（取消注释并配置）
   image_dir: "/root/siton-data-51d3ce9aba3246f88f64ea65f79d5133/rectify/pairs"
