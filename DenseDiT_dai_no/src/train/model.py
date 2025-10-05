@@ -168,6 +168,13 @@ class DenseDiTModel(L.LightningModule):
 
         # Prepare image input
         x_0, img_ids = encode_images(self.flux_pipe, imgs, device=self.device, dtype=self.train_dtype)
+
+        # Prepare conditions
+        condition_latents, condition_ids = encode_images(self.flux_pipe, conditions, device=self.device, dtype=self.train_dtype)
+        
+        # Prepare context
+        context_latents, context_ids = encode_images(self.flux_pipe, context, device=self.device, dtype=self.train_dtype)
+        
         # Prepare text input
         prompt_embeds, pooled_prompt_embeds, text_ids = prepare_text_input(
             self.flux_pipe, prompts, device=self.device, dtype=self.train_dtype
@@ -175,15 +182,9 @@ class DenseDiTModel(L.LightningModule):
 
         # Prepare t and x_t
         t = torch.sigmoid(torch.randn((imgs.shape[0],), device=self.device)) # (B,)
-        x_1 = torch.randn_like(x_0, device=self.device) # (B, Seq_len, C)
+        x_1 = torch.randn_like(x_0, device=self.device, dtype=self.train_dtype) # (B, Seq_len, C)
         t_ = t.view(-1, 1, 1) # (B, 1, 1)
-        x_t = ((1 - t_) * x_0 + t_ * x_1).to(self.train_dtype)
-
-        # Prepare conditions
-        condition_latents, condition_ids = encode_images(self.flux_pipe, conditions, device=self.device, dtype=self.train_dtype)
-        
-        # Prepare context
-        context_latents, context_ids = encode_images(self.flux_pipe, context, device=self.device, dtype=self.train_dtype)
+        x_t = ((1 - t_) * x_0 + t_ * x_1)
 
         # Prepare guidance
         guidance = (
