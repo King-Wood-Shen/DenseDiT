@@ -132,6 +132,9 @@ def print_training_info(rank, world_size, run_name, config, ds_config):
     train_config = config["train"]
     
     print("=" * 80)
+    print(f"Configurations:")
+    print(json.dumps(config, indent=2))
+    print("=" * 80)
     print(f"Training Configuration:")
     print(f"  Rank: {rank}/{world_size}")
     print(f"  Run name: {run_name}")

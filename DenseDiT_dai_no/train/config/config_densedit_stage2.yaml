@@ -15,7 +15,7 @@ train:
   batch_size: 1
   accumulate_grad_batches: 4
   dataloader_workers: 8
-  image_size: [256, 256]  # 输入图像尺寸（宽, 高）
+  image_size: [512, 512]  # 输入图像尺寸（宽, 高）
   
   # 数据集路径（取消注释并配置）
   image_dir: "/root/siton-data-51d3ce9aba3246f88f64ea65f79d5133/rectify/pairs"
@@ -55,7 +55,7 @@ deepspeed:
   # ZeRO 优化阶段：2 或 3
   # - Stage 2: 更快，但需要更多显存
   # - Stage 3: 更省显存，但稍慢
-  zero_stage: 2
+  zero_stage: 3
   
   # CPU Offload 配置（用于节省显存）
   # - "none": 全部在 GPU（最快）
